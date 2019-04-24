@@ -1,0 +1,10 @@
+[package]
+name = "hdfs-comm"
+version = "0.1.0"
+authors = ["Daniel Rammer <hamersaw@bushpath.com>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1"
+crossbeam-channel = "0.3"
+rand = "0.6"
