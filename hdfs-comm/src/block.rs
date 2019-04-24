@@ -2,7 +2,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use crossbeam_channel::{self, Receiver, Sender};
 
 use std;
-use std::io::{BufWriter, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::thread::JoinHandle;
 
 pub struct BlockOutputStream {
