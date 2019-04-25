@@ -6,5 +6,9 @@ edition = "2018"
 
 [dependencies]
 byteorder = "1"
+bytes = "0.4"
+crc = "1.0"
 crossbeam-channel = "0.3"
+hdfs-protos = { path = "../hdfs-protos" }
+prost = "0.5"
 rand = "0.6"

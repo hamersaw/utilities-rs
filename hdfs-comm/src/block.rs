@@ -1,5 +1,7 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use crossbeam_channel::{self, Receiver, Sender};
+use hdfs_protos::hadoop::hdfs::PacketHeaderProto;
+use prost::Message;
 
 use std;
 use std::io::{ErrorKind, Read, Write};
@@ -83,33 +85,55 @@ impl Write for BlockOutputStream {
 }
 
 fn send_chunks(mut stream: impl Write + Send,
-        receiver: Receiver<Vec<u8>>, _chunk_size_bytes: u32) {
+        receiver: Receiver<Vec<u8>>, chunk_size_bytes: u32) {
+    let mut sequence_number = 0;
+    let mut offset_in_block = 0;
     for buf in receiver.iter() {
+        // TODO - error handling everywhere
         // compute packet length
-        //let checksum_count =
-        //    (buf.len() as f64 / chunk_size_bytes as f64).ceil() as u32;
-        //let packet_length = 4 + buf.len() as u32 + (checksum_count * 4);
-        //stream.write_int(packet_length);
+        let checksum_count =
+            (buf.len() as f64 / chunk_size_bytes as f64).ceil() as i32;
+        let packet_length = 4 + buf.len() as i32 + (checksum_count * 4);
+        stream.write_i32::<BigEndian>(packet_length);
 
-        // TODO - write packet header proto
-
-        // TODO - write checksums
+        // write packet header proto
+        let packet_header_proto = PacketHeaderProto {
+                offset_in_block: offset_in_block,
+                seqno: sequence_number,
+                last_packet_in_block: buf.len() == 0,
+                data_len: buf.len() as i32,
+                sync_block: Some(false),
+            };
         
-        // TODO - write buf
+        stream.write_i16::<BigEndian>(packet_header_proto
+            .encoded_len() as i16);
 
-        // TODO - tmp
-        stream.write_u32::<BigEndian>(buf.len() as u32).unwrap();
-        stream.write_all(&buf).unwrap();
-        if buf.len() == 0 {
-            stream.write_u8(1).unwrap();
-        } else {
-            stream.write_u8(0).unwrap();
+        let mut packet_header_buf = Vec::new();
+        packet_header_proto.encode(&mut packet_header_buf);
+        stream.write_all(&packet_header_buf);
+
+        // write checksums
+        for i in 0..checksum_count {
+            let start_index = (i * chunk_size_bytes as i32) as usize;
+            let end_index = std::cmp::min((i + 1)
+                * chunk_size_bytes as i32, buf.len() as i32) as usize;
+            let checksum = crc::crc32::checksum_castagnoli(
+                &buf[start_index..end_index]);
+
+            stream.write_u32::<BigEndian>(checksum);
         }
+        
+        // write buf
+        stream.write_all(&buf);
+        stream.flush();
 
         // if last packet -> break from loop
         if buf.len() == 0 {
             break;
         }
+
+        sequence_number += 1;
+        offset_in_block += buf.len() as i64;
     }
 }
 
@@ -200,13 +224,31 @@ impl Read for BlockInputStream {
 
 fn recv_chunks(mut stream: impl Read, sender: Sender<Vec<u8>>) {
     loop {
-        // TODO - tmp
-        let packet_length = stream.read_u32::<BigEndian>().unwrap() as usize;
-        let mut buf = vec![0u8; packet_length];
-        stream.read_exact(&mut buf[0..packet_length]).unwrap();
-        let last_packet = stream.read_u8().unwrap();
+        // TODO - handle errors on all of this
+        // read packet length and packet header
+        let packet_length = stream.read_i32::<BigEndian>().unwrap();
 
-        if last_packet == 1 {
+        let packet_header_length =
+            stream.read_i16::<BigEndian>().unwrap() as usize;
+        let mut packet_header_buffer = vec![0u8; packet_header_length];
+        stream.read_exact(&mut packet_header_buffer).unwrap();
+        let packet_header_proto =
+            PacketHeaderProto::decode(packet_header_buffer).unwrap();
+
+        // read checksums
+        let checksums_count = (packet_length - 4
+            - packet_header_proto.data_len) / 4;
+        for _ in 0..checksums_count {
+            let _ = stream.read_u32::<BigEndian>().unwrap();
+        }
+
+        // read data
+        let mut buf = vec![0u8; packet_header_proto.data_len as usize];
+        stream.read_exact(&mut buf).unwrap();
+
+        // TODO - validate checksums
+
+        if packet_header_proto.last_packet_in_block {
             break;
         }
 
