@@ -14,26 +14,49 @@ fn main() {
         .expect("failed to create prefix directory");
     config.out_dir(&output_directory);
 
-    // configure extern paths in protobuf
-    config.extern_path(".hadoop.hdfs", "crate::hdfs");
-
     // compile protos
     config.compile_protos(
-	&["src/acl.proto",
-            "src/ClientDatanodeProtocol.proto",
-            "src/ClientNamenodeProtocol.proto",
-            "src/DatanodeProtocol.proto",
-            "src/datatransfer.proto",
-            "src/encryption.proto",
-            "src/HAServiceProtocol.proto",
-            "src/hdfs.proto",
-            "src/HdfsServer.proto",
-            "src/inotify.proto",
-            "src/IpcConnectionContext.proto",
-            "src/NamenodeProtocol.proto",
-            "src/ProtobufRpcEngine.proto",
-            "src/RpcHeader.proto",
-            "src/Security.proto",
-            "src/xattr.proto"],
-        &["src/"]).unwrap();
+        &["acl.proto",
+            "ClientDatanodeProtocol.proto",
+            "ClientNamenodeProtocol.proto",
+            "DatanodeProtocol.proto",
+            "datatransfer.proto",
+            "encryption.proto",
+            "HAServiceProtocol.proto",
+            "hdfs.proto",
+            "HdfsServer.proto",
+            "inotify.proto",
+            "IpcConnectionContext.proto",
+            "NamenodeProtocol.proto",
+            "ProtobufRpcEngine.proto",
+            "RpcHeader.proto",
+            "Security.proto",
+            "xattr.proto"],
+        &["protos/"]).unwrap();
+
+    /*config.compile_protos(
+	&["protos/HAServiceProtocol.proto",
+            "protos/IpcConnectionContext.proto",
+            "protos/ProtobufRpcEngine.proto",
+            "protos/RpcHeader.proto",
+            "protos/Security.proto"],
+        &["protos/"]).unwrap();
+
+    config.compile_protos(
+	&["protos/acl.proto",
+            "protos/ClientDatanodeProtocol.proto",
+            "protos/ClientNamenodeProtocol.proto",
+            "protos/datatransfer.proto",
+            "protos/encryption.proto",
+            "protos/hdfs.proto",
+            "protos/HdfsServer.proto",
+            "protos/inotify.proto",
+            "protos/xattr.proto"],
+        &["protos/"]).unwrap();
+
+    config.compile_protos(&["protos/DatanodeProtocol.proto"],
+        &["protos/"]).unwrap();
+
+    config.compile_protos(&["protos/NamenodeProtocol.proto"],
+        &["protos/"]).unwrap();*/
 }
