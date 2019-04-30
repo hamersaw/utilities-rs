@@ -1,18 +1,39 @@
-extern crate byteorder;
-extern crate crossbeam_channel;
-
 pub mod block;
+
+pub mod rpc;
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn random_block_transfer() {
-        extern crate rand;
-        use rand::Rng;
+    fn cycle_rpc_server() {
+        use std::net::TcpListener;
+        use super::rpc::{Protocols, Server};
 
+        // open server
+        let listener = TcpListener::bind("127.0.0.1:15605").unwrap();
+
+        let mut protocols = Protocols::new();
+        protocols.register("com.bushpath.nahfs",
+            "test", Box::new(|stream| {}));
+
+        let mut rpc_server = Server::new(listener, protocols, 4);
+
+        // start server
+        if let Err(e) = rpc_server.start() {
+            panic!(e);
+        }
+
+        // stop server
+        if let Err(e) = rpc_server.stop() {
+            panic!(e);
+        }
+    }
+
+    #[test]
+    fn transfer_random_block() {
+        use rand::Rng;
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
-
         use super::block::{BlockInputStream, BlockOutputStream};
 
         // generate random block
