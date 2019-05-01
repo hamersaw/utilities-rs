@@ -16,20 +16,22 @@ pub trait Protocol: Send + Sync {
 }
 
 pub struct Server {
-    shutdown: Arc<AtomicBool>,
     listener: TcpListener,
-    protocols: Arc<RwLock<HashMap<String, Box<Protocol>>>>,
     thread_count: u8,
+    sleep_ms: u64,
+    shutdown: Arc<AtomicBool>,
+    protocols: Arc<RwLock<HashMap<String, Box<Protocol>>>>,
     join_handles: Vec<JoinHandle<()>>,
 }
 
 impl Server {
-    pub fn new(listener: TcpListener, thread_count: u8) -> Server {
+    pub fn new(listener: TcpListener, thread_count: u8, sleep_ms: u64) -> Server {
         Server {
-            shutdown: Arc::new(AtomicBool::new(true)),
             listener: listener,
-            protocols: Arc::new(RwLock::new(HashMap::new())),
             thread_count: thread_count,
+            sleep_ms: sleep_ms,
+            shutdown: Arc::new(AtomicBool::new(true)),
+            protocols: Arc::new(RwLock::new(HashMap::new())),
             join_handles: Vec::new(),
         }
     }
@@ -49,8 +51,9 @@ impl Server {
             // clone variables
             let listener_clone = self.listener.try_clone()?;
             listener_clone.set_nonblocking(true)?;
-            let protocols_clone = self.protocols.clone();
+            let sleep_duration = Duration::from_millis(self.sleep_ms);
             let shutdown_clone = self.shutdown.clone();
+            let protocols_clone = self.protocols.clone();
 
             let join_handle = std::thread::spawn(move || {
                 for result in listener_clone.incoming() {
@@ -68,7 +71,7 @@ impl Server {
                         },
                         Err(ref e) if e.kind() ==
                                 std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(Duration::from_millis(20));
+                            std::thread::sleep(sleep_duration);
                         },
                         Err(ref e) if e.kind() !=
                                 std::io::ErrorKind::WouldBlock => {
@@ -163,7 +166,8 @@ fn process_stream(stream: &mut TcpStream,
                 // parse IpcConnectionContextProto
                 let ipc_connection_context = IpcConnectionContextProto
                     ::decode_length_delimited(&req_buf[req_buf_index..])?;
-                req_buf_index += calculate_length(ipc_connection_context.encoded_len());
+                req_buf_index += calculate_length(
+                    ipc_connection_context.encoded_len());
 
                 // TODO - process IpcConnectionContextProto
                 //println!("{:?} {:?}", ipc_connection_context.user_info,
@@ -203,7 +207,6 @@ fn process_stream(stream: &mut TcpStream,
         stream.flush();
 
         // check rpc_header_request.rpc_op (2 -> close)
-        debug!("rpc op: {:?}", rpc_header_request.rpc_op);
         if rpc_header_request.rpc_op.is_none() || 
                 rpc_header_request.rpc_op.unwrap() == 2 {
             break;

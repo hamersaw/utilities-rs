@@ -10,26 +10,18 @@ mod tests {
     #[test]
     fn cycle_rpc_server() {
         use std::net::TcpListener;
-        use super::rpc::{Protocols, Server};
+        use super::rpc::Server;
 
         // open server
-        let listener = TcpListener::bind("127.0.0.1:15605").unwrap();
-
-        let mut protocols = Protocols::new();
-        protocols.register("com.bushpath.nahfs",
-            "test", Box::new(|stream| {}));
-
-        let mut rpc_server = Server::new(listener, protocols, 4);
+        let listener = TcpListener::bind("127.0.0.1:15605")
+            .expect("TcpListener bind");
+        let mut rpc_server = Server::new(listener, 4, 50);
 
         // start server
-        if let Err(e) = rpc_server.start() {
-            panic!(e);
-        }
+        rpc_server.start().expect("server start");
 
         // stop server
-        if let Err(e) = rpc_server.stop() {
-            panic!(e);
-        }
+        rpc_server.stop().expect("server stop");
     }
 
     #[test]
