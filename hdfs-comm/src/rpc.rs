@@ -1,5 +1,4 @@
-use bytes::buf::IntoBuf;
-use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto,
     RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto};
 use prost::{self, Message};
@@ -38,6 +37,7 @@ impl Server {
     pub fn register(&mut self, protocol_name: &str, protocol: Box<Protocol>) {
         let mut protocols = self.protocols.write().unwrap();
         protocols.insert(protocol_name.to_owned(), protocol);
+        info!("registered protocol: {}", protocol_name);
     }
 
     pub fn start(&mut self) -> std::io::Result<()> {
@@ -58,9 +58,12 @@ impl Server {
                         Ok(mut stream) => {
                             // process stream
                             let protocols = protocols_clone.read().unwrap();
-                            if let Err(e) = process_stream(&mut stream,
-                                    &protocols) {
-                                error!("failed to process stream: {}", e);
+                            match process_stream(&mut stream, &protocols) {
+                                Err(ref e) if e.kind() != std::io
+                                        ::ErrorKind::UnexpectedEof => {
+                                    error!("failed to process stream {}", e);
+                                },
+                                _ => {},
                             }
                         },
                         Err(ref e) if e.kind() ==
@@ -121,7 +124,7 @@ fn process_stream(stream: &mut TcpStream,
         let mut req_buf_index = 0;
 
         // read RpcRequestHeaderProto
-        debug!("RpcRequestHeaderProto: {}", req_buf_index);
+        debug!("parsing RpcRequestHeaderProto: {}", req_buf_index);
         let rpc_header_request = RpcRequestHeaderProto
             ::decode_length_delimited(&req_buf[req_buf_index..])?;
         req_buf_index += calculate_length(rpc_header_request.encoded_len());
@@ -142,6 +145,7 @@ fn process_stream(stream: &mut TcpStream,
                 // parse RpcSaslProto
                 let rpc_sasl = RpcSaslProto
                     ::decode_length_delimited(&req_buf)?;
+                req_buf_index += calculate_length(rpc_sasl.encoded_len());
 
                 match rpc_sasl.state {
                     1 =>  {
@@ -164,6 +168,7 @@ fn process_stream(stream: &mut TcpStream,
                 // TODO - process IpcConnectionContextProto
                 //println!("{:?} {:?}", ipc_connection_context.user_info,
                 //    ipc_connection_context.protocol);
+                continue; // don't send response here
             },
             call_id if call_id >= 0 => {
                 debug!("RequestHeaderProto: {}", req_buf_index);
@@ -185,20 +190,24 @@ fn process_stream(stream: &mut TcpStream,
                 // execute method
                 protocol.process(&request_header.method_name,
                     &req_buf[req_buf_index..], &mut resp_buf);
+                // TODO - increment req_buf_index?
+                //  will need to figure out how much data is read
             },
             _ => unimplemented!(),
         }
 
         // write response buffer
+        debug!("writing resp {}", resp_buf.len());
         stream.write_i32::<BigEndian>(resp_buf.len() as i32)?;
         stream.write_all(&resp_buf)?;
+        stream.flush();
 
-        // check rpc_header_request.rpc_op (1 -> continuation)
+        // check rpc_header_request.rpc_op (2 -> close)
         debug!("rpc op: {:?}", rpc_header_request.rpc_op);
-        //if rpc_header_request.rpc_op.is_none() || 
-        //        rpc_header_request.rpc_op.unwrap() != 1 {
-        //    break;
-        //}
+        if rpc_header_request.rpc_op.is_none() || 
+                rpc_header_request.rpc_op.unwrap() == 2 {
+            break;
+        }
     }
 
     Ok(())
