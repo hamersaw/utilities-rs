@@ -10,5 +10,6 @@ bytes = "0.4"
 crc = "1.0"
 crossbeam-channel = "0.3"
 hdfs-protos = { path = "../hdfs-protos" }
+log = "0.4"
 prost = "0.5"
 rand = "0.6"

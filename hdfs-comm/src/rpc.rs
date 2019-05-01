@@ -12,14 +12,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::thread::JoinHandle;
 
-pub trait Service: Send + Sync {
+pub trait Protocol: Send + Sync {
     fn process(&self, method: &str, req_buf: &[u8], resp_buf: &mut Vec<u8>);
 }
 
 pub struct Server {
     shutdown: Arc<AtomicBool>,
     listener: TcpListener,
-    services: Arc<RwLock<HashMap<String, Box<Service>>>>,
+    protocols: Arc<RwLock<HashMap<String, Box<Protocol>>>>,
     thread_count: u8,
     join_handles: Vec<JoinHandle<()>>,
 }
@@ -29,15 +29,15 @@ impl Server {
         Server {
             shutdown: Arc::new(AtomicBool::new(true)),
             listener: listener,
-            services: Arc::new(RwLock::new(HashMap::new())),
+            protocols: Arc::new(RwLock::new(HashMap::new())),
             thread_count: thread_count,
             join_handles: Vec::new(),
         }
     }
 
-    pub fn register(&mut self, protocol: &str, service: Box<Service>) {
-        let mut services = self.services.write().unwrap();
-        services.insert(protocol.to_owned(), service);
+    pub fn register(&mut self, protocol_name: &str, protocol: Box<Protocol>) {
+        let mut protocols = self.protocols.write().unwrap();
+        protocols.insert(protocol_name.to_owned(), protocol);
     }
 
     pub fn start(&mut self) -> std::io::Result<()> {
@@ -49,7 +49,7 @@ impl Server {
             // clone variables
             let listener_clone = self.listener.try_clone()?;
             listener_clone.set_nonblocking(true)?;
-            let services_clone = self.services.clone();
+            let protocols_clone = self.protocols.clone();
             let shutdown_clone = self.shutdown.clone();
 
             let join_handle = std::thread::spawn(move || {
@@ -57,10 +57,10 @@ impl Server {
                     match result {
                         Ok(mut stream) => {
                             // process stream
-                            let services = services_clone.read().unwrap();
+                            let protocols = protocols_clone.read().unwrap();
                             if let Err(e) = process_stream(&mut stream,
-                                    &services) {
-                                println!("{}", e); // TODO - log
+                                    &protocols) {
+                                error!("failed to process stream: {}", e);
                             }
                         },
                         Err(ref e) if e.kind() ==
@@ -69,7 +69,7 @@ impl Server {
                         },
                         Err(ref e) if e.kind() !=
                                 std::io::ErrorKind::WouldBlock => {
-                            println!("{}", e); // TODO - log
+                            error!("failed to connect client: {}", e);
                         },
                         _ => {},
                     }
@@ -106,7 +106,7 @@ impl Server {
 }
 
 fn process_stream(stream: &mut TcpStream,
-        services: &HashMap<String, Box<Service>>) -> std::io::Result<()> {
+        protocols: &HashMap<String, Box<Protocol>>) -> std::io::Result<()> {
     // iterate over rpc requests
     let mut connection_header = vec![0u8; 7];
  
@@ -121,7 +121,7 @@ fn process_stream(stream: &mut TcpStream,
         let mut req_buf_index = 0;
 
         // read RpcRequestHeaderProto
-        println!("RpcRequestHeaderProto: {}", req_buf_index);
+        debug!("RpcRequestHeaderProto: {}", req_buf_index);
         let rpc_header_request = RpcRequestHeaderProto
             ::decode_length_delimited(&req_buf[req_buf_index..])?;
         req_buf_index += calculate_length(rpc_header_request.encoded_len());
@@ -138,7 +138,7 @@ fn process_stream(stream: &mut TcpStream,
         // match call id of request
         match rpc_header_request.call_id {
             -33 => {
-                println!("RpcSaslProto: {}", req_buf_index);
+                debug!("RpcSaslProto: {}", req_buf_index);
                 // parse RpcSaslProto
                 let rpc_sasl = RpcSaslProto
                     ::decode_length_delimited(&req_buf)?;
@@ -155,36 +155,35 @@ fn process_stream(stream: &mut TcpStream,
                 }
             },
             -3 => {
-                println!("IpcConnectionContextProto: {}", req_buf_index);
+                debug!("IpcConnectionContextProto: {}", req_buf_index);
                 // parse IpcConnectionContextProto
                 let ipc_connection_context = IpcConnectionContextProto
                     ::decode_length_delimited(&req_buf[req_buf_index..])?;
                 req_buf_index += calculate_length(ipc_connection_context.encoded_len());
 
                 // TODO - process IpcConnectionContextProto
-                println!("{:?} {:?}", ipc_connection_context.user_info,
-                    ipc_connection_context.protocol);
+                //println!("{:?} {:?}", ipc_connection_context.user_info,
+                //    ipc_connection_context.protocol);
             },
             call_id if call_id >= 0 => {
-                println!("RequestHeaderProto: {}", req_buf_index);
+                debug!("RequestHeaderProto: {}", req_buf_index);
                 // parse RequestHeaderProto
                 let request_header = RequestHeaderProto
                     ::decode_length_delimited(&req_buf[req_buf_index..])?;
                 req_buf_index += calculate_length(request_header.encoded_len());
 
-                // get service
-                let services_result = services.get(&request_header
+                // get protocol
+                let protocol_result = protocols.get(&request_header
                     .declaring_class_protocol_name);
-                if let None = services_result {
-                    // TODO - service doesn't exist
-                    println!("service '{}' does not exist",
+                if let None = protocol_result {
+                    error!("protocol '{}' does not exist",
                         &request_header.declaring_class_protocol_name);
                 }
 
-                let service = services_result.unwrap();
+                let protocol = protocol_result.unwrap();
 
                 // execute method
-                service.process(&request_header.method_name,
+                protocol.process(&request_header.method_name,
                     &req_buf[req_buf_index..], &mut resp_buf);
             },
             _ => unimplemented!(),
@@ -195,7 +194,7 @@ fn process_stream(stream: &mut TcpStream,
         stream.write_all(&resp_buf)?;
 
         // check rpc_header_request.rpc_op (1 -> continuation)
-        println!("{:?}", rpc_header_request.rpc_op);
+        debug!("rpc op: {:?}", rpc_header_request.rpc_op);
         //if rpc_header_request.rpc_op.is_none() || 
         //        rpc_header_request.rpc_op.unwrap() != 1 {
         //    break;
