@@ -1,6 +1,5 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto,
-    RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto};
+use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto};
 use prost::{self, Message};
 
 use std::collections::HashMap;
@@ -10,6 +9,9 @@ use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::thread::JoinHandle;
+
+static CONNECTION_HEADER: [u8; 7] = ['h' as u8,
+    'r' as u8, 'p' as u8, 'c' as u8, 9, 0, 0];
 
 pub trait Protocol: Send + Sync {
     fn process(&self, method: &str, req_buf: &[u8], resp_buf: &mut Vec<u8>);
@@ -39,7 +41,7 @@ impl Server {
     pub fn register(&mut self, protocol_name: &str, protocol: Box<Protocol>) {
         let mut protocols = self.protocols.write().unwrap();
         protocols.insert(protocol_name.to_owned(), protocol);
-        info!("registered protocol: {}", protocol_name);
+        debug!("registered protocol: {}", protocol_name);
     }
 
     pub fn start(&mut self) -> std::io::Result<()> {
@@ -127,7 +129,7 @@ fn process_stream(stream: &mut TcpStream,
         let mut req_buf_index = 0;
 
         // read RpcRequestHeaderProto
-        debug!("parsing RpcRequestHeaderProto: {}", req_buf_index);
+        trace!("parsing RpcRequestHeaderProto: {}", req_buf_index);
         let rpc_header_request = RpcRequestHeaderProto
             ::decode_length_delimited(&req_buf[req_buf_index..])?;
         req_buf_index += calculate_length(rpc_header_request.encoded_len());
@@ -144,7 +146,7 @@ fn process_stream(stream: &mut TcpStream,
         // match call id of request
         match rpc_header_request.call_id {
             -33 => {
-                debug!("RpcSaslProto: {}", req_buf_index);
+                trace!("RpcSaslProto: {}", req_buf_index);
                 // parse RpcSaslProto
                 let rpc_sasl = RpcSaslProto
                     ::decode_length_delimited(&req_buf)?;
@@ -162,7 +164,7 @@ fn process_stream(stream: &mut TcpStream,
                 }
             },
             -3 => {
-                debug!("IpcConnectionContextProto: {}", req_buf_index);
+                trace!("IpcConnectionContextProto: {}", req_buf_index);
                 // parse IpcConnectionContextProto
                 let ipc_connection_context = IpcConnectionContextProto
                     ::decode_length_delimited(&req_buf[req_buf_index..])?;
@@ -175,7 +177,7 @@ fn process_stream(stream: &mut TcpStream,
                 continue; // don't send response here
             },
             call_id if call_id >= 0 => {
-                debug!("RequestHeaderProto: {}", req_buf_index);
+                trace!("RequestHeaderProto: {}", req_buf_index);
                 // parse RequestHeaderProto
                 let request_header = RequestHeaderProto
                     ::decode_length_delimited(&req_buf[req_buf_index..])?;
@@ -201,10 +203,9 @@ fn process_stream(stream: &mut TcpStream,
         }
 
         // write response buffer
-        debug!("writing resp {}", resp_buf.len());
+        trace!("writing resp {}", resp_buf.len());
         stream.write_i32::<BigEndian>(resp_buf.len() as i32)?;
         stream.write_all(&resp_buf)?;
-        stream.flush();
 
         // check rpc_header_request.rpc_op (2 -> close)
         if rpc_header_request.rpc_op.is_none() || 
@@ -214,6 +215,61 @@ fn process_stream(stream: &mut TcpStream,
     }
 
     Ok(())
+}
+
+pub struct Client {
+    stream: TcpStream,
+}
+
+impl Client {
+    pub fn new(ip_address: &str, port: u16) -> std::io::Result<Client> {
+        // open TcpStream
+        let mut stream = TcpStream::connect(
+            &format!("{}:{}", ip_address, port))?;
+
+        // write connection header
+        stream.write_all(&CONNECTION_HEADER)?;
+
+        Ok(
+            Client {
+                stream: stream,
+            }
+        )
+    }
+
+    pub fn write_message(&mut self, protocol: &str, method: &str,
+            message: impl Message) -> std::io::Result<()> {
+        let mut req_buf = Vec::new();
+
+        // create RpcRequestHeaderProto
+        let mut rrh_proto = RpcRequestHeaderProto::default();
+        rrh_proto.call_id = 0; // TODO - monotonically increasing number
+        rrh_proto.encode_length_delimited(&mut req_buf)?;
+
+        // create RpcHeaderProto
+        let mut rh_proto = RequestHeaderProto::default();
+        rh_proto.declaring_class_protocol_name = protocol.to_string();
+        rh_proto.method_name = method.to_string();
+        rh_proto.encode_length_delimited(&mut req_buf)?;
+
+        // add message onto buf
+        message.encode_length_delimited(&mut req_buf)?;
+     
+        // write to stream
+        self.stream.write_i32::<BigEndian>(req_buf.len() as i32)?;
+        self.stream.write_all(&req_buf)?;
+        self.stream.flush()?;
+
+        // read response
+        let packet_length =
+            self.stream.read_u32::<BigEndian>()? as usize;
+        let mut resp_buf = vec![0u8; packet_length];
+        self.stream.read_exact(&mut resp_buf)?;
+
+        // TODO - handle response
+
+        Ok(())
+    }
 }
 
 fn calculate_length(length: usize) -> usize {
