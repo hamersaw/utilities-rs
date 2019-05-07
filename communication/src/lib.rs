@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub trait StreamHandler where Self: Send + Sync {
-    fn process(&self, stream: &TcpStream) -> std::io::Result<()>;
+    fn process(&self, stream: &mut TcpStream) -> std::io::Result<()>;
 }
 
 pub struct Server {

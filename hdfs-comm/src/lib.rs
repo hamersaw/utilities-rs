@@ -8,23 +8,6 @@ pub mod rpc;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn cycle_rpc_server() {
-        use std::net::TcpListener;
-        use super::rpc::Server;
-
-        // open server
-        let listener = TcpListener::bind("127.0.0.1:15605")
-            .expect("TcpListener bind");
-        let mut rpc_server = Server::new(listener, 4, 50);
-
-        // start server
-        rpc_server.start().expect("server start");
-
-        // stop server
-        rpc_server.stop().expect("server stop");
-    }
-
-    #[test]
     fn transfer_random_block() {
         use rand::Rng;
         use std::io::{Read, Write};
