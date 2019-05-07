@@ -7,8 +7,8 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 static CONNECTION_HEADER: [u8; 7] = ['h' as u8,
     'r' as u8, 'p' as u8, 'c' as u8, 9, 0, 0];
@@ -115,12 +115,11 @@ impl Server {
 
 fn process_stream(stream: &mut TcpStream,
         protocols: &HashMap<String, Box<Protocol>>) -> std::io::Result<()> {
-    // iterate over rpc requests
-    let mut connection_header = vec![0u8; 7];
- 
     // read in connection header - TODO validate
+    let mut connection_header = vec![0u8; 7];
     stream.read_exact(&mut connection_header)?;
 
+    // iterate over rpc requests
     loop {
         // read packet
         let packet_length = stream.read_u32::<BigEndian>()? as usize;
