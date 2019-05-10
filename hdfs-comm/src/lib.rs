@@ -36,7 +36,7 @@ mod tests {
 
             // write block to stream
             let mut out_stream: BlockOutputStream =
-                BlockOutputStream::new(Box::new(stream),
+                BlockOutputStream::new(stream,
                     chunk_size_bytes, chunks_per_packet);
 
             out_stream.write_all(&block);
@@ -48,7 +48,7 @@ mod tests {
             Ok(stream) => {
                 // read block from stream
                 let mut in_stream = BlockInputStream::new(
-                    Box::new(stream), chunk_size_bytes, chunks_per_packet);
+                    stream, chunk_size_bytes, chunks_per_packet);
 
                 let mut buf = Vec::new();
                 in_stream.read_to_end(&mut buf);

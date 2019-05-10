@@ -1,10 +1,11 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use crossbeam_channel::{self, Receiver, Sender};
-use hdfs_protos::hadoop::hdfs::PacketHeaderProto;
+use hdfs_protos::hadoop::hdfs::{PacketHeaderProto, PipelineAckProto};
 use prost::Message;
 
 use std;
 use std::io::{ErrorKind, Read, Write};
+use std::net::TcpStream;
 use std::thread::JoinHandle;
 
 pub struct BlockOutputStream {
@@ -15,7 +16,7 @@ pub struct BlockOutputStream {
 }
 
 impl BlockOutputStream {
-    pub fn new(stream: Box<Write + Send>, chunk_size_bytes: u32,
+    pub fn new(stream: TcpStream, chunk_size_bytes: u32,
             chunks_per_packet: u8) -> BlockOutputStream {
         // initialize chunk channel
         let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>)
@@ -84,7 +85,7 @@ impl Write for BlockOutputStream {
     }
 }
 
-fn send_chunks(mut stream: impl Write + Send,
+fn send_chunks(mut stream: TcpStream,
         receiver: Receiver<Vec<u8>>, chunk_size_bytes: u32) {
     let mut sequence_number = 0;
     let mut offset_in_block = 0;
@@ -146,7 +147,7 @@ pub struct BlockInputStream {
 }
 
 impl BlockInputStream {
-    pub fn new(stream: Box<Read + Send>, chunk_size_bytes: u32,
+    pub fn new(stream: TcpStream, chunk_size_bytes: u32,
             chunks_per_packet: u8) -> BlockInputStream {
         // initialize chunk channel
         let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>)
@@ -222,7 +223,9 @@ impl Read for BlockInputStream {
     }
 }
 
-fn recv_chunks(mut stream: impl Read, sender: Sender<Vec<u8>>) {
+fn recv_chunks(mut stream: TcpStream, sender: Sender<Vec<u8>>) {
+    let mut pa_proto = PipelineAckProto::default();
+    let mut resp_buf = Vec::new();
     loop {
         // TODO - handle errors on all of this
         // read packet length and packet header
@@ -247,6 +250,12 @@ fn recv_chunks(mut stream: impl Read, sender: Sender<Vec<u8>>) {
         stream.read_exact(&mut buf).unwrap();
 
         // TODO - validate checksums
+
+        // send pipeline ack
+        resp_buf.clear();
+        pa_proto.seqno = packet_header_proto.seqno;
+        pa_proto.encode_length_delimited(&mut resp_buf).unwrap();
+        stream.write_all(&resp_buf).unwrap();
 
         if packet_header_proto.last_packet_in_block {
             break;
