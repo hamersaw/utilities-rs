@@ -33,30 +33,4 @@ fn main() {
             "Security.proto",
             "xattr.proto"],
         &["protos/"]).unwrap();
-
-    /*config.compile_protos(
-	&["protos/HAServiceProtocol.proto",
-            "protos/IpcConnectionContext.proto",
-            "protos/ProtobufRpcEngine.proto",
-            "protos/RpcHeader.proto",
-            "protos/Security.proto"],
-        &["protos/"]).unwrap();
-
-    config.compile_protos(
-	&["protos/acl.proto",
-            "protos/ClientDatanodeProtocol.proto",
-            "protos/ClientNamenodeProtocol.proto",
-            "protos/datatransfer.proto",
-            "protos/encryption.proto",
-            "protos/hdfs.proto",
-            "protos/HdfsServer.proto",
-            "protos/inotify.proto",
-            "protos/xattr.proto"],
-        &["protos/"]).unwrap();
-
-    config.compile_protos(&["protos/DatanodeProtocol.proto"],
-        &["protos/"]).unwrap();
-
-    config.compile_protos(&["protos/NamenodeProtocol.proto"],
-        &["protos/"]).unwrap();*/
 }
