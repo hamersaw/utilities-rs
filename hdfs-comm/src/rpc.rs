@@ -1,6 +1,6 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use communication::StreamHandler;
-use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto};
+use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto, UserInformationProto};
 use prost::{self, Message};
 
 use std::collections::HashMap;
@@ -15,7 +15,8 @@ static CONNECTION_HEADER: [u8; 7] = ['h' as u8,
     'r' as u8, 'p' as u8, 'c' as u8, 9, 0, 0];
 
 pub trait Protocol: Send + Sync {
-    fn process(&self, method: &str, req_buf: &[u8], resp_buf: &mut Vec<u8>);
+    fn process(&self, user: &Option<String>, method: &str,
+        req_buf: &[u8], resp_buf: &mut Vec<u8>);
 }
 
 pub struct Protocols {
@@ -41,6 +42,8 @@ impl StreamHandler for Protocols {
         // read in connection header - TODO validate
         let mut connection_header = vec![0u8; 7];
         stream.read_exact(&mut connection_header)?;
+
+        let mut user = None;
 
         // iterate over rpc requests
         loop {
@@ -99,9 +102,11 @@ impl StreamHandler for Protocols {
                     req_buf_index += calculate_length(
                         ipc_connection_context.encoded_len());
 
-                    // TODO - process IpcConnectionContextProto
-                    //println!("{:?} {:?}", ipc_connection_context.user_info,
-                    //    ipc_connection_context.protocol);
+                    if let Some(user_information_proto) =
+                            ipc_connection_context.user_info {
+
+                        user = user_information_proto.effective_user;
+                    }
                     continue; // don't send response here
                 },
                 call_id if call_id >= 0 => {
@@ -125,7 +130,7 @@ impl StreamHandler for Protocols {
                     let protocol = protocol_result.unwrap();
 
                     // execute method
-                    protocol.process(&request_header.method_name,
+                    protocol.process(&user, &request_header.method_name,
                         &req_buf[req_buf_index..], &mut resp_buf);
                     // TODO - increment req_buf_index?
                     //  will need to figure out how much data is read
