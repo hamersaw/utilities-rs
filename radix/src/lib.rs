@@ -140,13 +140,13 @@ mod tests {
         trie.insert(&"danny".as_bytes(), String::from("rammer"));
         trie.insert(&"dan".as_bytes(), String::from("the man"));
         trie.insert(&"danerys".as_bytes(), String::from("targeryn"));
-        print(&trie.root, 0);
+        print(&trie, 0);
 
         trie.insert(&"david".as_bytes(), String::from("&goliath"));
-        print(&trie.root, 0);
+        print(&trie, 0);
 
         trie.insert(&"danerya".as_bytes(), String::from("blartaryn"));
-        print(&trie.root, 0);
+        print(&trie, 0);
 
         println!("find 'dani': {:?}", trie.get(&"dani".as_bytes()));
         println!("find 'danny': {:?}", trie.get(&"danny".as_bytes()));
