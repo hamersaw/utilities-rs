@@ -1,3 +1,5 @@
+pub mod query;
+
 pub struct RadixTrie<T> {
     key: Vec<u8>,
     value: Option<T>,
@@ -140,19 +142,19 @@ mod tests {
         trie.insert(&"danny".as_bytes(), String::from("rammer"));
         trie.insert(&"dan".as_bytes(), String::from("the man"));
         trie.insert(&"danerys".as_bytes(), String::from("targeryn"));
-        print(&trie, 0);
+        //print(&trie, 0);
 
         trie.insert(&"david".as_bytes(), String::from("&goliath"));
-        print(&trie, 0);
+        //print(&trie, 0);
 
         trie.insert(&"danerya".as_bytes(), String::from("blartaryn"));
-        print(&trie, 0);
+        //print(&trie, 0);
 
-        println!("find 'dani': {:?}", trie.get(&"dani".as_bytes()));
+        /*println!("find 'dani': {:?}", trie.get(&"dani".as_bytes()));
         println!("find 'danny': {:?}", trie.get(&"danny".as_bytes()));
         println!("find 'davidson': {:?}", trie.get(&"davidson".as_bytes()));
         println!("find 'da': {:?}", trie.get(&"da".as_bytes()));
-        println!("find 'danerys': {:?}", trie.get(&"danerys".as_bytes()));
+        println!("find 'danerys': {:?}", trie.get(&"danerys".as_bytes()));*/
     }
 
     fn print(node: &super::RadixTrie<String>, depth: u8) {
