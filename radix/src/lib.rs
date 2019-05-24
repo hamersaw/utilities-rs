@@ -122,8 +122,7 @@ impl<T> RadixTrie<T> {
                 self.children.push(split_node);
             } else {
                 // if no split -> insert into child
-                self.children[index]
-                    .insert(&key[match_length..], value);
+                self.children[index].insert(&key[match_length..], value)?;
             }
         } else {
             // if no match -> create new child

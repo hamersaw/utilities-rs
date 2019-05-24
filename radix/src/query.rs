@@ -1,5 +1,9 @@
 use crate::{RadixError, RadixTrie};
 
+pub trait RadixProcessor<T> {
+    fn process(&mut self, t: &T);
+}
+
 #[derive(Debug, PartialEq)]
 pub enum BooleanOperation {
     And,
@@ -21,13 +25,13 @@ impl RadixQuery {
         }
     }
 
-    pub fn evaluate(&self, trie: &RadixTrie<usize>) {
+    pub fn evaluate<T>(&self, trie: &RadixTrie<T>, processor: &mut Box<RadixProcessor<T>>) {
         for child in trie.children.iter() {
-            self.evaluate_recursive(child, 0, &vec![true; self.expressions.len()], 0);
+            self.evaluate_recursive(child, processor, 0, &vec![true; self.expressions.len()], 0);
         }
     }
 
-    fn evaluate_recursive(&self, trie: &RadixTrie<usize>,
+    fn evaluate_recursive<T>(&self, trie: &RadixTrie<T>, processor: &mut Box<RadixProcessor<T>>,
             index: usize, expression_mask: &[bool], depth: u8) {
         // compute (valid, include) for each expression on node
         let mut results = Vec::new();
@@ -63,8 +67,9 @@ impl RadixQuery {
         if !valid {
             return;
         } else if include {
-            // TODO - include value
-            println!("INCLUDE {:?}:{:?}", String::from_utf8_lossy(&trie.key), &trie.value);
+            if let Some(value) = &trie.value {
+                processor.process(&value);
+            }
         }
 
         // compute expression mask for children
@@ -77,8 +82,8 @@ impl RadixQuery {
 
         // execute on children
         for child in trie.children.iter() {
-            self.evaluate_recursive(child, index + trie.key.len(),
-                &children_expression_mask, depth + 1);
+            self.evaluate_recursive(child, processor, 
+                index + trie.key.len(), &children_expression_mask, depth + 1);
         }
     }
 }
@@ -236,6 +241,15 @@ mod tests {
 
     #[test]
     fn parse_query() {
+        struct PrintProcessor {
+        }
+
+        impl<T: std::fmt::Debug> super::RadixProcessor<T> for PrintProcessor {
+            fn process(&mut self, value: &T) {
+                println!("{:?}", value);
+            }
+        }
+
         let mut trie = crate::RadixTrie::<usize>::new();
         let vec = vec!["danny", "dan", "daniel", "danerys", "david", "danerya", "everet", "emmett"];
         for (i, value) in vec.iter().enumerate() {
@@ -244,6 +258,8 @@ mod tests {
 
         let query = super::parse_query("prefix=dan&prefix!dane")
             .expect("radix query parsing");
-        query.evaluate(&trie);
+        let mut processor: Box<super::RadixProcessor<usize>> =
+            Box::new(PrintProcessor{ });
+        query.evaluate(&trie, &mut processor);
     }
 }
