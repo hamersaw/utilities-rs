@@ -1,10 +1,12 @@
-use crate::RadixTrie;
+use crate::{RadixError, RadixTrie};
 
+#[derive(Debug, PartialEq)]
 pub enum BooleanOperation {
     And,
     Or,
 }
 
+#[derive(Debug)]
 pub struct RadixQuery {
     expressions: Vec<PrefixExpression>,
     operation: BooleanOperation,
@@ -36,11 +38,6 @@ impl RadixQuery {
                 results.push((false, false));
             }
         }
-
-        /*for _ in 0..depth {
-            print!("  ");
-        }
-        println!("evaluating on '{}' : {:?} : {:?}", String::from_utf8_lossy(&trie.key), &results, &expression_mask);*/
 
         // process expression results
         let mut valid;
@@ -86,7 +83,7 @@ impl RadixQuery {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PrefixOperation {
     Equal,
     NotEqual,
@@ -133,15 +130,92 @@ impl PrefixExpression {
     }
 }
 
+pub fn parse_query(query_string: &str)
+        -> Result<RadixQuery, RadixError> {
+    // find indices of split characters (ex. '&' or '|')
+    let characters: Vec<char> = query_string.chars().collect();
+    let (mut key, mut value, mut on_key)
+        = (String::new(), String::new(), true);
+
+    let mut boolean_operation = None;
+    let mut prefix_operation = PrefixOperation::Equal;
+    let mut expressions = Vec::new();
+    for i in 0..characters.len() {
+        match characters[i] {
+            x if x == '&' || x == '|' => {
+                // set boolean operation
+                let op = match x {
+                    '&' => BooleanOperation::And,
+                    '|' => BooleanOperation::Or,
+                    _ => unreachable!(),
+                };
+
+                match &boolean_operation {
+                    Some(current_op) => {
+                        if current_op != &op {
+                            return Err(RadixError::from("only one boolean operation type allowed in each query"));
+                        }
+                    },
+                    None => boolean_operation = Some(op),
+                }
+
+                // process key and value
+                match &key[..] {
+                    "prefix" | "p"  => {
+                        expressions.push(
+                            PrefixExpression::new(value.clone(),
+                                prefix_operation.clone()));
+                    },
+                    _ => return Err(RadixError::from("unknown key")),
+                }
+
+                // reset iteration variables
+                key.clear();
+                value.clear();
+                on_key = true;
+            },
+            x if x == '=' || x == '!' => {
+                // set prefix operation
+                match x {
+                    '=' => prefix_operation = PrefixOperation::Equal,
+                    '!' => prefix_operation = PrefixOperation::NotEqual,
+                    _ => unreachable!(),
+                }
+
+                // no longer on key
+                on_key = false;
+            },
+            x => {
+                match on_key {
+                    true => key.push(x),
+                    false => value.push(x),
+                }
+            },
+        }
+    }
+
+    // process last key and value
+    match &key[..] {
+        "prefix" | "p"  => {
+            expressions.push(
+                PrefixExpression::new(value.clone(),
+                    prefix_operation.clone()));
+        },
+        _ => return Err(RadixError::from("unknown key")),
+    }
+
+    Ok(RadixQuery::new(expressions,
+        boolean_operation.unwrap_or(BooleanOperation::And)))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
-    fn insert() {
+    fn query() {
         use super::{BooleanOperation, PrefixExpression,
             PrefixOperation, RadixQuery};
 
         let mut trie = crate::RadixTrie::<usize>::new();
-
         let vec = vec!["danny", "dan", "daniel", "danerys", "david", "danerya", "everet", "emmett"];
         for (i, value) in vec.iter().enumerate() {
             trie.insert(value.as_bytes(), i);
@@ -157,6 +231,19 @@ mod tests {
             PrefixOperation::Equal));
         let query = RadixQuery::new(expressions, BooleanOperation::And);
 
+        //query.evaluate(&trie);
+    }
+
+    #[test]
+    fn parse_query() {
+        let mut trie = crate::RadixTrie::<usize>::new();
+        let vec = vec!["danny", "dan", "daniel", "danerys", "david", "danerya", "everet", "emmett"];
+        for (i, value) in vec.iter().enumerate() {
+            trie.insert(value.as_bytes(), i);
+        }
+
+        let query = super::parse_query("prefix=dan&prefix!dane")
+            .expect("radix query parsing");
         query.evaluate(&trie);
     }
 }

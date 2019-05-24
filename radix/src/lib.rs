@@ -1,4 +1,8 @@
+mod error;
 pub mod query;
+
+pub use error::RadixError;
+pub use query::{parse_query, BooleanOperation, PrefixExpression, PrefixOperation, RadixQuery};
 
 pub struct RadixTrie<T> {
     key: Vec<u8>,
@@ -76,10 +80,10 @@ impl<T> RadixTrie<T> {
         (self.children.len(), match_length)
     }
 
-    pub fn insert(&mut self, key: &[u8], value: T) {
+    pub fn insert(&mut self, key: &[u8], value: T)
+            -> Result<(), RadixError> {
         if key.len() == 0 {
-            // TODO - throw error
-            return;
+            return Err(RadixError::from("TODO - message?"));
         }
 
         // get longest key match
@@ -131,6 +135,8 @@ impl<T> RadixTrie<T> {
 
             self.children.push(node);
         }
+
+        Ok(())
     }
 }
 
