@@ -2,7 +2,7 @@ mod error;
 pub mod query;
 
 pub use error::RadixError;
-pub use query::{parse_query, BooleanOperation, PrefixExpression, PrefixOperation, RadixQuery};
+pub use query::{parse_query, BooleanOperation, PrefixExpression, PrefixOperation, RadixProcessor, RadixQuery};
 
 pub struct RadixTrie<T> {
     key: Vec<u8>,

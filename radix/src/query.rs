@@ -1,7 +1,7 @@
 use crate::{RadixError, RadixTrie};
 
 pub trait RadixProcessor<T> {
-    fn process(&mut self, t: &T);
+    fn process(&mut self, key: &str, t: &T);
 }
 
 #[derive(Debug, PartialEq)]
@@ -25,14 +25,23 @@ impl RadixQuery {
         }
     }
 
-    pub fn evaluate<T>(&self, trie: &RadixTrie<T>, processor: &mut Box<RadixProcessor<T>>) {
+    pub fn evaluate<T>(&self, trie: &RadixTrie<T>,
+            processor: &mut Box<RadixProcessor<T>>) {
+        let mut key = Vec::new();
         for child in trie.children.iter() {
-            self.evaluate_recursive(child, processor, 0, &vec![true; self.expressions.len()], 0);
+            self.evaluate_recursive(child, processor, 0, &mut key,
+                &vec![true; self.expressions.len()]);
         }
     }
 
-    fn evaluate_recursive<T>(&self, trie: &RadixTrie<T>, processor: &mut Box<RadixProcessor<T>>,
-            index: usize, expression_mask: &[bool], depth: u8) {
+    fn evaluate_recursive<T>(&self, trie: &RadixTrie<T>,
+            processor: &mut Box<RadixProcessor<T>>,
+            index: usize, key: &mut Vec<u8>, expression_mask: &[bool]) {
+        // append trie.key to key
+        for value in trie.key.iter() {
+            key.push(*value);
+        }
+
         // compute (valid, include) for each expression on node
         let mut results = Vec::new();
         for (i, expression) in self.expressions.iter().enumerate() {
@@ -68,7 +77,8 @@ impl RadixQuery {
             return;
         } else if include {
             if let Some(value) = &trie.value {
-                processor.process(&value);
+                let key_string = String::from_utf8_lossy(&key);
+                processor.process(&key_string, &value);
             }
         }
 
@@ -82,8 +92,13 @@ impl RadixQuery {
 
         // execute on children
         for child in trie.children.iter() {
-            self.evaluate_recursive(child, processor, 
-                index + trie.key.len(), &children_expression_mask, depth + 1);
+            self.evaluate_recursive(child, processor,
+                index + trie.key.len(), key, &children_expression_mask);
+        }
+ 
+        // remove trie.key from key
+        for _ in 0..trie.key.len() {
+            let _ = key.pop();
         }
     }
 }
@@ -245,8 +260,8 @@ mod tests {
         }
 
         impl<T: std::fmt::Debug> super::RadixProcessor<T> for PrintProcessor {
-            fn process(&mut self, value: &T) {
-                println!("{:?}", value);
+            fn process(&mut self, key: &str, value: &T) {
+                println!("{:?} : {:?}", key, value);
             }
         }
 
