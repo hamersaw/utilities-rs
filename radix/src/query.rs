@@ -21,8 +21,8 @@ impl RadixQuery {
         }
     }
 
-    pub fn evaluate<T, U, F>(&self, trie: &RadixTrie<T>,
-            token: &mut U, f: &mut F) where F: FnMut(&str, &T, &mut U) {
+    pub fn evaluate<T, U, F>(&self, trie: &RadixTrie<T>, token: &mut U,
+            f: &mut F) where F: FnMut(&Vec<u8>, &T, &mut U) {
         let mut key = Vec::new();
         for child in trie.children.iter() {
             self.evaluate_recursive(child, token, f, 0, &mut key,
@@ -31,9 +31,8 @@ impl RadixQuery {
     }
 
     fn evaluate_recursive<T, U, F>(&self, trie: &RadixTrie<T>,
-            token: &mut U, f: &mut F,
-            index: usize, key: &mut Vec<u8>, expression_mask: &[bool]) 
-            where F: FnMut(&str, &T, &mut U) {
+            token: &mut U, f: &mut F, index: usize, key: &mut Vec<u8>,
+            expression_mask: &[bool]) where F: FnMut(&Vec<u8>, &T, &mut U) {
         // append trie.key to key
         for value in trie.key.iter() {
             key.push(*value);
@@ -74,9 +73,7 @@ impl RadixQuery {
             return;
         } else if include {
             if let Some(value) = &trie.value {
-                let key_string = String::from_utf8_lossy(&key);
-                //processor.process(&key_string, &value);
-                f(&key_string, value, token);
+                f(&key, value, token);
             }
         }
 
@@ -265,7 +262,7 @@ mod tests {
         query.evaluate(&trie, &mut (), &mut print_process);
     }
 
-    fn print_process(key: &str, value: &usize, token: &mut ()) {
-        println!("{:?} : {:?}", key, value);
+    fn print_process(key: &Vec<u8>, value: &usize, token: &mut ()) {
+        println!("{:?} : {:?}", String::from_utf8_lossy(key), value);
     }
 }
