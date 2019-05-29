@@ -68,29 +68,31 @@ impl RadixQuery {
             },
         }
 
-        // check valdity and include value for this node
-        if !valid {
-            return;
-        } else if include {
-            if let Some(value) = &trie.value {
-                f(&key, value, token);
+        // check validity for this node
+        if valid {
+            // if include -> process this node
+            if include {
+                if let Some(value) = &trie.value {
+                    f(&key, value, token);
+                }
+            }
+
+            // compute expression mask for children
+            let mut children_expression_mask =
+                Vec::with_capacity(self.expressions.len());
+            for (i, result) in results.iter().enumerate() {
+                children_expression_mask.push(
+                    expression_mask[i] & result.0);
+            }
+
+            // execute on children
+            for child in trie.children.iter() {
+                self.evaluate_recursive(child, token, f,
+                    index + trie.key.len(),
+                    key, &children_expression_mask);
             }
         }
 
-        // compute expression mask for children
-        let mut children_expression_mask =
-            Vec::with_capacity(self.expressions.len());
-        for (i, result) in results.iter().enumerate() {
-            children_expression_mask.push(
-                expression_mask[i] & result.0);
-        }
-
-        // execute on children
-        for child in trie.children.iter() {
-            self.evaluate_recursive(child, token, f,
-                index + trie.key.len(), key, &children_expression_mask);
-        }
- 
         // remove trie.key from key
         for _ in 0..trie.key.len() {
             let _ = key.pop();
@@ -253,9 +255,12 @@ mod tests {
     fn parse_query() {
         let mut trie = crate::RadixTrie::<usize>::new();
         let vec = vec!["danny", "dan", "daniel", "danerys", "david", "danerya", "everet", "emmett"];
+        //let vec = vec!["8bcc", "8bce"];
         for (i, value) in vec.iter().enumerate() {
             trie.insert(value.as_bytes(), i);
         }
+
+        //print(&trie, 0);
 
         let query = super::parse_query("prefix=dan&prefix!dane")
             .expect("radix query parsing");
@@ -264,5 +269,16 @@ mod tests {
 
     fn print_process(key: &Vec<u8>, value: &usize, token: &mut ()) {
         println!("{:?} : {:?}", String::from_utf8_lossy(key), value);
+    }
+
+    fn print(trie: &super::RadixTrie<usize>, depth: u8) {
+        for _ in 0..depth {
+            print!("    ");
+        }
+        println!("{} -> {:?}", String::from_utf8_lossy(&trie.key), trie.value);
+
+        for child in trie.children.iter() {
+            print(child, depth + 1);
+        }
     }
 }
