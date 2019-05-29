@@ -1,5 +1,5 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
-use crossbeam_channel::{self, Receiver, Sender};
+use crossbeam_channel::{self, Receiver, RecvError, Sender};
 use hdfs_protos::hadoop::hdfs::{PacketHeaderProto, PipelineAckProto};
 use prost::Message;
 
@@ -182,11 +182,11 @@ impl BlockInputStream {
         self.join_handle = None;
     }
 
-    fn fill(&mut self) -> std::io::Result<()> {
+    fn fill(&mut self) -> std::io::Result<usize> {
         // retrieve next buffer
         let result = self.receiver.recv();
-        if let Err(e) = result {
-            return Err(std::io::Error::new(ErrorKind::UnexpectedEof, e));
+        if let Err(RecvError) = result {
+            return Ok(0),
         }
 
         let buf = result.unwrap();
@@ -198,7 +198,7 @@ impl BlockInputStream {
         self.start_index = 0;
         self.end_index = buf.len();
 
-        Ok(())
+        Ok(buf.len())
     }
 }
 
@@ -206,7 +206,9 @@ impl Read for BlockInputStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // if no data in buffer -> fill buffer
         if self.start_index == self.end_index {
-            self.fill()?;
+            if self.fill()? == 0 {
+                return Ok(0);
+            }
         }
 
         // copy data
