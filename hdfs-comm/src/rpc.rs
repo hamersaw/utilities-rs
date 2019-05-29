@@ -16,7 +16,7 @@ static CONNECTION_HEADER: [u8; 7] = ['h' as u8,
 
 pub trait Protocol: Send + Sync {
     fn process(&self, user: &Option<String>, method: &str,
-        req_buf: &[u8], resp_buf: &mut Vec<u8>);
+        req_buf: &[u8], resp_buf: &mut Vec<u8>) -> std::io::Result<()>;
 }
 
 pub struct Protocols {
@@ -70,8 +70,8 @@ impl StreamHandler for Protocols {
             rpc_header_response.client_id =
                 Some(rpc_header_request.client_id);
 
+            //rpc_header_response.encode_length_delimited(&mut resp_buf)?;
             let mut resp_buf = Vec::new();
-            rpc_header_response.encode_length_delimited(&mut resp_buf)?;
 
             // match call id of request
             match rpc_header_request.call_id {
@@ -104,7 +104,6 @@ impl StreamHandler for Protocols {
 
                     if let Some(user_information_proto) =
                             ipc_connection_context.user_info {
-
                         user = user_information_proto.effective_user;
                     }
                     continue; // don't send response here
@@ -130,8 +129,14 @@ impl StreamHandler for Protocols {
                     let protocol = protocol_result.unwrap();
 
                     // execute method
-                    protocol.process(&user, &request_header.method_name,
-                        &req_buf[req_buf_index..], &mut resp_buf);
+                    if let Err(e) = protocol.process(&user, 
+                            &request_header.method_name,
+                            &req_buf[req_buf_index..], &mut resp_buf) {
+                        // if error -> set response to failure 
+                        rpc_header_response.status = 1;
+                        rpc_header_response.error_msg =
+                            Some(e.to_string());
+                    }
                     // TODO - increment req_buf_index?
                     //  will need to figure out how much data is read
                 },
@@ -139,8 +144,13 @@ impl StreamHandler for Protocols {
             }
 
             // write response buffer
-            trace!("writing resp {}", resp_buf.len());
-            stream.write_i32::<BigEndian>(resp_buf.len() as i32)?;
+            let mut header_resp_buf = Vec::new();
+            rpc_header_response.encode_length_delimited(&mut header_resp_buf)?;
+
+            let resp_len = header_resp_buf.len() + resp_buf.len();
+            trace!("writing resp {}", resp_len);
+            stream.write_i32::<BigEndian>(resp_len as i32)?;
+            stream.write_all(&header_resp_buf)?;
             stream.write_all(&resp_buf)?;
 
             // check rpc_header_request.rpc_op (2 -> close)
@@ -174,8 +184,9 @@ impl Client {
         )
     }
 
-    pub fn write_message(&mut self, protocol: &str, method: &str,
-            message: impl Message) -> std::io::Result<()> {
+    pub fn write_message(&mut self, protocol: &str, 
+            method: &str, message: impl Message) 
+            -> std::io::Result<(RpcResponseHeaderProto, Vec<u8>)> {
         let mut req_buf = Vec::new();
 
         // create RpcRequestHeaderProto
@@ -203,9 +214,15 @@ impl Client {
         let mut resp_buf = vec![0u8; packet_length];
         self.stream.read_exact(&mut resp_buf)?;
 
-        // TODO - handle response
+        // handle response
+        let rrph_proto = RpcResponseHeaderProto
+            ::decode_length_delimited(&resp_buf[0..])?;
 
-        Ok(())
+        for _ in 0..calculate_length(rrph_proto.encoded_len()) {
+            resp_buf.remove(0);
+        }
+
+        Ok((rrph_proto, resp_buf))
     }
 }
 
