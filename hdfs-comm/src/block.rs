@@ -4,7 +4,7 @@ use hdfs_protos::hadoop::hdfs::{PacketHeaderProto, PipelineAckProto};
 use prost::Message;
 
 use std;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread::JoinHandle;
 
@@ -23,7 +23,10 @@ impl BlockOutputStream {
             = crossbeam_channel::unbounded();
 
         let join_handle = std::thread::spawn(move || {
-                send_chunks(stream, receiver, chunk_size_bytes);
+                if let Err(e) = send_chunks(stream,
+                        receiver, chunk_size_bytes) {
+                    warn!("send chunks thread failed: {}", e);
+                }
             });
 
         // calculate buffer length
@@ -85,17 +88,16 @@ impl Write for BlockOutputStream {
     }
 }
 
-fn send_chunks(mut stream: TcpStream,
-        receiver: Receiver<Vec<u8>>, chunk_size_bytes: u32) {
+fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
+        chunk_size_bytes: u32) -> std::io::Result<()> {
     let mut sequence_number = 0;
     let mut offset_in_block = 0;
     for buf in receiver.iter() {
-        // TODO - error handling everywhere
         // compute packet length
         let checksum_count =
             (buf.len() as f64 / chunk_size_bytes as f64).ceil() as i32;
         let packet_length = 4 + buf.len() as i32 + (checksum_count * 4);
-        stream.write_i32::<BigEndian>(packet_length);
+        stream.write_i32::<BigEndian>(packet_length)?;
 
         // write packet header proto
         let packet_header_proto = PacketHeaderProto {
@@ -107,11 +109,11 @@ fn send_chunks(mut stream: TcpStream,
             };
         
         stream.write_i16::<BigEndian>(packet_header_proto
-            .encoded_len() as i16);
+            .encoded_len() as i16)?;
 
         let mut packet_header_buf = Vec::new();
-        packet_header_proto.encode(&mut packet_header_buf);
-        stream.write_all(&packet_header_buf);
+        packet_header_proto.encode(&mut packet_header_buf)?;
+        stream.write_all(&packet_header_buf)?;
 
         // write checksums
         for i in 0..checksum_count {
@@ -121,12 +123,12 @@ fn send_chunks(mut stream: TcpStream,
             let checksum = crc::crc32::checksum_castagnoli(
                 &buf[start_index..end_index]);
 
-            stream.write_u32::<BigEndian>(checksum);
+            stream.write_u32::<BigEndian>(checksum)?;
         }
         
         // write buf
-        stream.write_all(&buf);
-        stream.flush();
+        stream.write_all(&buf)?;
+        stream.flush()?;
 
         // if last packet -> break from loop
         if buf.len() == 0 {
@@ -136,6 +138,8 @@ fn send_chunks(mut stream: TcpStream,
         sequence_number += 1;
         offset_in_block += buf.len() as i64;
     }
+
+    Ok(())
 }
 
 pub struct BlockInputStream {
@@ -155,7 +159,9 @@ impl BlockInputStream {
 
         // start chunk sending thread
         let join_handle = std::thread::spawn(move || {
-                recv_chunks(stream, sender);
+                if let Err(e) = recv_chunks(stream, sender) {
+                    warn!("recv chunks thread failed: {}", e);
+                }
             });
 
         // calculate buffer length
@@ -186,7 +192,7 @@ impl BlockInputStream {
         // retrieve next buffer
         let result = self.receiver.recv();
         if let Err(RecvError) = result {
-            return Ok(0),
+            return Ok(0);
         }
 
         let buf = result.unwrap();
@@ -225,39 +231,38 @@ impl Read for BlockInputStream {
     }
 }
 
-fn recv_chunks(mut stream: TcpStream, sender: Sender<Vec<u8>>) {
+fn recv_chunks(mut stream: TcpStream, sender: Sender<Vec<u8>>) -> std::io::Result<()> {
     let mut pa_proto = PipelineAckProto::default();
     let mut resp_buf = Vec::new();
     loop {
         // TODO - handle errors on all of this
         // read packet length and packet header
-        let packet_length = stream.read_i32::<BigEndian>().unwrap();
+        let packet_length = stream.read_i32::<BigEndian>()?;
 
-        let packet_header_length =
-            stream.read_i16::<BigEndian>().unwrap() as usize;
+        let packet_header_length = stream.read_i16::<BigEndian>()? as usize;
         let mut packet_header_buffer = vec![0u8; packet_header_length];
-        stream.read_exact(&mut packet_header_buffer).unwrap();
+        stream.read_exact(&mut packet_header_buffer)?;
         let packet_header_proto =
-            PacketHeaderProto::decode(packet_header_buffer).unwrap();
+            PacketHeaderProto::decode(packet_header_buffer)?;
 
         // read checksums
         let checksums_count = (packet_length - 4
             - packet_header_proto.data_len) / 4;
         for _ in 0..checksums_count {
-            let _ = stream.read_u32::<BigEndian>().unwrap();
+            let _ = stream.read_u32::<BigEndian>()?;
         }
 
         // read data
         let mut buf = vec![0u8; packet_header_proto.data_len as usize];
-        stream.read_exact(&mut buf).unwrap();
+        stream.read_exact(&mut buf)?;
 
         // TODO - validate checksums
 
         // send pipeline ack
         resp_buf.clear();
         pa_proto.seqno = packet_header_proto.seqno;
-        pa_proto.encode_length_delimited(&mut resp_buf).unwrap();
-        stream.write_all(&resp_buf).unwrap();
+        pa_proto.encode_length_delimited(&mut resp_buf)?;
+        stream.write_all(&resp_buf)?;
 
         if packet_header_proto.last_packet_in_block {
             break;
@@ -267,4 +272,5 @@ fn recv_chunks(mut stream: TcpStream, sender: Sender<Vec<u8>>) {
     }
 
     drop(sender);
+    Ok(())
 }
