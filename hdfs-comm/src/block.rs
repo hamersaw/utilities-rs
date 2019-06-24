@@ -235,7 +235,6 @@ fn recv_chunks(mut stream: TcpStream, sender: Sender<Vec<u8>>) -> std::io::Resul
     let mut pa_proto = PipelineAckProto::default();
     let mut resp_buf = Vec::new();
     loop {
-        // TODO - handle errors on all of this
         // read packet length and packet header
         let packet_length = stream.read_i32::<BigEndian>()?;
 

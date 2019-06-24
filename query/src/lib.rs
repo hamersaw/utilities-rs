@@ -18,18 +18,15 @@ pub enum BooleanOp {
 }
 
 pub struct BooleanExpression<T> {
-    left_op: Box<BinaryExpression<T>>,
-    right_op: Box<BinaryExpression<T>>,
+    operands: Vec<Box<BinaryExpression<T>>>,
     boolean_op: BooleanOp,
 }
 
 impl<T> BooleanExpression<T> {
-    pub fn new(left_op: Box<BinaryExpression<T>>,
-            right_op: Box<BinaryExpression<T>>,
+    pub fn new(operands: Vec<Box<BinaryExpression<T>>>,
             boolean_op: BooleanOp) -> BooleanExpression<T> {
         BooleanExpression {
-            left_op: left_op,
-            right_op: right_op,
+            operands: operands,
             boolean_op: boolean_op,
         }
     }
@@ -38,10 +35,24 @@ impl<T> BooleanExpression<T> {
 impl<T> BinaryExpression<T> for BooleanExpression<T> {
     fn evaluate(&self, t: &T) -> bool {
         match &self.boolean_op {
-            BooleanOp::And => 
-                self.left_op.evaluate(t) && self.right_op.evaluate(t),
-            BooleanOp::Or => 
-                self.left_op.evaluate(t) || self.right_op.evaluate(t),
+            BooleanOp::And => {
+                for operand in self.operands.iter() {
+                    if !operand.evaluate(t) {
+                        return false;
+                    }
+                }
+
+                true
+            },
+            BooleanOp::Or =>  {
+                for operand in self.operands.iter() {
+                    if operand.evaluate(t) {
+                        return true;
+                    }
+                }
+
+                false
+            },
         }
     }
 }
@@ -190,8 +201,9 @@ mod tests {
             Box::new(evaluate_greater), Box::new(constant_greater),
             CompareOp::GreaterThan);
 
-        let boolean = BooleanExpression::new(Box::new(compare_less),
-            Box::new(compare_greater), BooleanOp::And);
+        let boolean = BooleanExpression::new(
+            vec!(Box::new(compare_less), Box::new(compare_greater)),
+            BooleanOp::And);
 
         assert_eq!(boolean.evaluate(&0u64), false);
         assert_eq!(boolean.evaluate(&10u64), false);
