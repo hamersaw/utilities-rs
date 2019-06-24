@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 pub trait BinaryExpression<T> {
     fn evaluate(&self, t: &T) -> bool;
+    fn evaluate_bin(&self, start: &T, end: &T) -> bool;
 }
 
 pub trait UnaryExpression<T> {
@@ -30,6 +31,10 @@ impl<T> BooleanExpression<T> {
             boolean_op: boolean_op,
         }
     }
+
+    pub fn operand_count(&self) -> usize {
+        self.operands.len()
+    }
 }
 
 impl<T> BinaryExpression<T> for BooleanExpression<T> {
@@ -47,6 +52,29 @@ impl<T> BinaryExpression<T> for BooleanExpression<T> {
             BooleanOp::Or =>  {
                 for operand in self.operands.iter() {
                     if operand.evaluate(t) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+        }
+    }
+
+    fn evaluate_bin(&self, start: &T, end: &T) -> bool {
+        match &self.boolean_op {
+            BooleanOp::And => {
+                for operand in self.operands.iter() {
+                    if !operand.evaluate_bin(start, end) {
+                        return false;
+                    }
+                }
+
+                true
+            },
+            BooleanOp::Or =>  {
+                for operand in self.operands.iter() {
+                    if operand.evaluate_bin(start, end) {
                         return true;
                     }
                 }
@@ -104,6 +132,17 @@ impl<T: PartialEq + PartialOrd> BinaryExpression<T>
                 self.left_op.evaluate(t) < self.right_op.evaluate(t),
             CompareOp::LessThanOrEqualTo => 
                 self.left_op.evaluate(t) <= self.right_op.evaluate(t),
+        }
+    }
+
+    fn evaluate_bin(&self, start: &T, end: &T) -> bool {
+        match &self.compare_op {
+            CompareOp::Equal | CompareOp::NotEqual =>  unimplemented!(),
+            CompareOp::GreaterThan 
+                    | CompareOp::GreaterThanOrEqualTo
+                    | CompareOp::LessThan 
+                    | CompareOp::LessThanOrEqualTo => 
+                self.evaluate(start) || self.evaluate(end),
         }
     }
 }
@@ -208,5 +247,7 @@ mod tests {
         assert_eq!(boolean.evaluate(&0u64), false);
         assert_eq!(boolean.evaluate(&10u64), false);
         assert_eq!(boolean.evaluate(&5u64), true);
+        assert_eq!(boolean.evaluate_bin(&5u64, &12u64), true);
+        assert_eq!(boolean.evaluate_bin(&11u64, &12u64), false);
     }
 }
