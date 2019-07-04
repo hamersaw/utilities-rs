@@ -16,15 +16,16 @@ pub struct BlockOutputStream {
 }
 
 impl BlockOutputStream {
-    pub fn new(stream: TcpStream, chunk_size_bytes: u32,
-            chunks_per_packet: u8) -> BlockOutputStream {
+    pub fn new(stream: TcpStream, offset_in_block: i64,
+            chunk_size_bytes: u32, chunks_per_packet: u8)
+            -> BlockOutputStream {
         // initialize chunk channel
         let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>)
             = crossbeam_channel::unbounded();
 
         let join_handle = std::thread::spawn(move || {
-                if let Err(e) = send_chunks(stream,
-                        receiver, chunk_size_bytes) {
+                if let Err(e) = send_chunks(stream, receiver,
+                        offset_in_block, chunk_size_bytes) {
                     warn!("send chunks thread failed: {}", e);
                 }
             });
@@ -89,9 +90,9 @@ impl Write for BlockOutputStream {
 }
 
 fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
-        chunk_size_bytes: u32) -> std::io::Result<()> {
+        mut offset_in_block: i64, chunk_size_bytes: u32)
+        -> std::io::Result<()> {
     let mut sequence_number = 0;
-    let mut offset_in_block = 0;
     for buf in receiver.iter() {
         // compute packet length
         let checksum_count =
@@ -107,7 +108,7 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
                 data_len: buf.len() as i32,
                 sync_block: Some(false),
             };
-        
+
         stream.write_i16::<BigEndian>(packet_header_proto
             .encoded_len() as i16)?;
 
