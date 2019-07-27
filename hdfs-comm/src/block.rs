@@ -7,10 +7,16 @@ use std;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread::JoinHandle;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
+static FIRST_BIT_U8: u8 = 128;
+static MASK_U8: u8 = 127;
 
 pub struct BlockOutputStream {
     sender: Sender<Vec<u8>>,
-    join_handle: Option<JoinHandle<()>>,
+    recv_acks_handle: Option<JoinHandle<()>>,
+    send_chunks_handle: Option<JoinHandle<()>>,
     buffer: Vec<u8>,
     index: usize,
 }
@@ -23,10 +29,28 @@ impl BlockOutputStream {
         let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>)
             = crossbeam_channel::unbounded();
 
-        let join_handle = std::thread::spawn(move || {
+        // start recv_acks send_chunks threads
+        let sequence_num = Arc::new(AtomicI64::new(0));
+        let ack_sequence_num = Arc::new(AtomicI64::new(0));
+        let last_packet = Arc::new(AtomicBool::new(false));
+
+        let ra_stream = stream.try_clone().unwrap();
+        let (ra_sequence_num, ra_ack_sequence_num) =
+            (sequence_num.clone(), ack_sequence_num.clone());
+        let ra_last_packet = last_packet.clone();
+
+        let recv_acks_handle = std::thread::spawn(move || {
+                if let Err(e) = recv_acks(ra_stream, ra_sequence_num,
+                        ra_ack_sequence_num, ra_last_packet) {
+                    warn!("failure in recv acks thread: {}", e);
+                }
+            });
+
+        let send_chunks_handle = std::thread::spawn(move || {
                 if let Err(e) = send_chunks(stream, receiver,
+                        sequence_num, last_packet,
                         offset_in_block, chunk_size_bytes) {
-                    warn!("send chunks thread failed: {}", e);
+                    warn!("failure in send chunks thread: {}", e);
                 }
             });
 
@@ -36,14 +60,15 @@ impl BlockOutputStream {
 
         BlockOutputStream {
             sender: sender,
-            join_handle: Some(join_handle),
+            recv_acks_handle: Some(recv_acks_handle),
+            send_chunks_handle: Some(send_chunks_handle),
             buffer: vec![0u8; buffer_length],
             index: 0,
         }
     }
 
     pub fn close(mut self) {
-        if let None = self.join_handle {
+        if let None = self.recv_acks_handle {
             return;
         }
 
@@ -54,9 +79,12 @@ impl BlockOutputStream {
         let _ = self.flush();
         drop(self.sender);
 
-        // join sender thread
-        let _ = self.join_handle.unwrap().join();
-        self.join_handle = None;
+        // join recv acks and send chunks thread
+        let _ = self.recv_acks_handle.unwrap().join();
+        self.recv_acks_handle = None;
+
+        let _ = self.send_chunks_handle.unwrap().join();
+        self.send_chunks_handle = None;
     }
 }
 
@@ -89,10 +117,42 @@ impl Write for BlockOutputStream {
     }
 }
 
+fn recv_acks(mut stream: TcpStream, sequence_num: Arc<AtomicI64>,
+        ack_sequence_num: Arc<AtomicI64>, last_packet: Arc<AtomicBool>)
+        -> std::io::Result<()> {
+    while !last_packet.load(Ordering::SeqCst) || 
+            ack_sequence_num.load(Ordering::SeqCst) 
+                < sequence_num.load(Ordering::SeqCst) {
+
+        // calculate leb128 encoded op proto length
+        let mut length = 0;
+        for i in 0.. {
+            let byte = stream.read_u8()?;
+            length += ((byte & MASK_U8) as u64) << (i * 7);
+
+            if byte & FIRST_BIT_U8 != FIRST_BIT_U8 {
+                break;
+            }
+        }
+
+        // read ack proto into buffer
+        let mut buf = vec![0u8; length as usize];
+        stream.read_exact(&mut buf)?;
+
+        // decode PipelineAckProto
+        let pipeline_ack_proto = PipelineAckProto::decode(buf)?;
+        if pipeline_ack_proto.seqno > ack_sequence_num.load(Ordering::SeqCst) {
+            ack_sequence_num.store(pipeline_ack_proto.seqno, Ordering::SeqCst);
+        }
+    }
+
+    Ok(())    
+}
+
 fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
+        sequence_num: Arc<AtomicI64>, last_packet: Arc<AtomicBool>,
         mut offset_in_block: i64, chunk_size_bytes: u32)
         -> std::io::Result<()> {
-    let mut sequence_number = 0;
     for buf in receiver.iter() {
         // compute packet length
         let checksum_count =
@@ -103,7 +163,7 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
         // write packet header proto
         let packet_header_proto = PacketHeaderProto {
                 offset_in_block: offset_in_block,
-                seqno: sequence_number,
+                seqno: sequence_num.load(Ordering::SeqCst),
                 last_packet_in_block: buf.len() == 0,
                 data_len: buf.len() as i32,
                 sync_block: Some(false),
@@ -133,10 +193,11 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
 
         // if last packet -> break from loop
         if buf.len() == 0 {
+            last_packet.store(true, Ordering::SeqCst);
             break;
         }
 
-        sequence_number += 1;
+        sequence_num.fetch_add(1, Ordering::SeqCst);
         offset_in_block += buf.len() as i64;
     }
 
