@@ -13,31 +13,59 @@ pub trait StreamHandler where Self: Send + Sync {
 
 pub struct Server {
     listener: TcpListener,
-    thread_count: u8,
     sleep_ms: u64,
     shutdown: Arc<AtomicBool>,
     join_handles: Vec<JoinHandle<()>>,
 }
 
 impl Server {
-    pub fn new(listener: TcpListener, thread_count: u8,
-            sleep_ms: u64) -> Server {
+    pub fn new(listener: TcpListener, sleep_ms: u64) -> Server {
         Server {
             listener: listener,
-            thread_count: thread_count,
             sleep_ms: sleep_ms,
             shutdown: Arc::new(AtomicBool::new(true)),
             join_handles: Vec::new(),
         }
     }
 
-    pub fn start(&mut self, handler: Arc<RwLock<Box<StreamHandler>>>)
-            -> std::io::Result<()> {
+    pub fn start(&mut self, handler: 
+            Arc<RwLock<Box<StreamHandler>>>) -> std::io::Result<()> {
+        // set shutdown
+        self.shutdown.store(false, Ordering::Relaxed);
+
+        // clone variables
+        let listener_clone = self.listener.try_clone()?;
+        listener_clone.set_nonblocking(true)?;
+        let sleep_duration = Duration::from_millis(self.sleep_ms);
+        let shutdown_clone = self.shutdown.clone();
+
+        let join_handle = std::thread::spawn(move || {
+            for result in listener_clone.incoming() {
+
+                let handler_clone = handler.clone();
+                std::thread::spawn(move || {
+                    process_stream_result(result,
+                        handler_clone, sleep_duration);
+                });
+
+                // check if shutdown
+                if shutdown_clone.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+        });
+
+        self.join_handles.push(join_handle);
+        Ok(())
+    }
+
+    pub fn start_threadpool(&mut self, thread_count: u8, handler:
+            Arc<RwLock<Box<StreamHandler>>>) -> std::io::Result<()> {
         // set shutdown
         self.shutdown.store(false, Ordering::Relaxed);
 
         // start worker threads
-        for _ in 0..self.thread_count {
+        for _ in 0..thread_count {
             // clone variables
             let listener_clone = self.listener.try_clone()?;
             listener_clone.set_nonblocking(true)?;
@@ -47,28 +75,8 @@ impl Server {
 
             let join_handle = std::thread::spawn(move || {
                 for result in listener_clone.incoming() {
-                    match result {
-                        Ok(mut stream) => {
-                            // process stream
-                            let handler = handler_clone.read().unwrap();
-                            match handler.process(&mut stream) {
-                                Err(ref e) if e.kind() != std::io
-                                        ::ErrorKind::UnexpectedEof => {
-                                    error!("failed to process stream {}", e);
-                                },
-                                _ => {},
-                            }
-                        },
-                        Err(ref e) if e.kind() ==
-                                std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(sleep_duration);
-                        },
-                        Err(ref e) if e.kind() !=
-                                std::io::ErrorKind::WouldBlock => {
-                            error!("failed to connect client: {}", e);
-                        },
-                        _ => {},
-                    }
+                    process_stream_result(result,
+                        handler_clone.clone(), sleep_duration);
 
                     // check if shutdown
                     if shutdown_clone.load(Ordering::Relaxed) {
@@ -101,6 +109,33 @@ impl Server {
     }
 }
 
+fn process_stream_result(result: std::io::Result<TcpStream>,
+        handler: Arc<RwLock<Box<StreamHandler>>>, 
+        sleep_duration: Duration) {
+    match result {
+        Ok(mut stream) => {
+            // process stream
+            let handler = handler.read().unwrap();
+            match handler.process(&mut stream) {
+                Err(ref e) if e.kind() != std::io
+                        ::ErrorKind::UnexpectedEof => {
+                    error!("failed to process stream {}", e);
+                },
+                _ => {},
+            }
+        },
+        Err(ref e) if e.kind() ==
+                std::io::ErrorKind::WouldBlock => {
+            std::thread::sleep(sleep_duration);
+        },
+        Err(ref e) if e.kind() !=
+                std::io::ErrorKind::WouldBlock => {
+            error!("failed to connect client: {}", e);
+        },
+        _ => {},
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -111,7 +146,7 @@ mod tests {
 
         struct NullHandler { }
         impl StreamHandler for NullHandler {
-            fn process(&self, _: &TcpStream) -> std::io::Result<()> {
+            fn process(&self, _: &mut TcpStream) -> std::io::Result<()> {
                 Ok(())
             }
         }
@@ -119,12 +154,14 @@ mod tests {
         // open server
         let listener = TcpListener::bind("127.0.0.1:15605")
             .expect("TcpListener bind");
-        let mut server = Server::new(listener, 4, 50);
+        let mut server = Server::new(listener, 4);
 
         // start server
         let handler = NullHandler {};
         server.start(Arc::new(RwLock::new(Box::new(handler))))
             .expect("server start");
+        //server.start_threadpool(8, Arc::new(RwLock::new(
+        //    Box::new(handler)))).expect("server start");
 
         // stop server
         server.stop().expect("server stop");
