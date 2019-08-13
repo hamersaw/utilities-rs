@@ -1,15 +1,12 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use communication::StreamHandler;
-use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto, UserInformationProto};
+use hdfs_protos::hadoop::common::{IpcConnectionContextProto, RequestHeaderProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto};
 use prost::{self, Message};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::net::TcpStream;
+use std::sync::RwLock;
 
 static CONNECTION_HEADER: [u8; 7] = ['h' as u8,
     'r' as u8, 'p' as u8, 'c' as u8, 9, 0, 0];
