@@ -4,11 +4,12 @@ use hdfs_protos::hadoop::hdfs::{PacketHeaderProto, PipelineAckProto};
 use prost::Message;
 
 use std;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::net::TcpStream;
-use std::thread::JoinHandle;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::thread::JoinHandle;
+use std::time::SystemTime;
 
 static FIRST_BIT_U8: u8 = 128;
 static MASK_U8: u8 = 127;
@@ -68,23 +69,43 @@ impl BlockOutputStream {
     }
 
     pub fn close(mut self) {
+        let close_start = SystemTime::now();
+
         if let None = self.recv_acks_handle {
             return;
         }
 
         // flush data, send empty packet, and drop sender
+        let flush_start = SystemTime::now();
         if self.index != 0 {
             let _ = self.flush();
         }
         let _ = self.flush();
+        let flush_duration = SystemTime::now()
+            .duration_since(flush_start);
+
+        let drop_start = SystemTime::now();
         drop(self.sender);
+        let drop_duration = SystemTime::now()
+            .duration_since(drop_start);
 
         // join recv acks and send chunks thread
-        let _ = self.recv_acks_handle.unwrap().join();
-        self.recv_acks_handle = None;
-
+        let chunk_start = SystemTime::now();
         let _ = self.send_chunks_handle.unwrap().join();
         self.send_chunks_handle = None;
+        let chunk_duration = SystemTime::now()
+            .duration_since(chunk_start);
+
+        let ack_start = SystemTime::now();
+        let _ = self.recv_acks_handle.unwrap().join();
+        self.recv_acks_handle = None;
+        let ack_duration = SystemTime::now()
+            .duration_since(ack_start);
+
+        let close_duration = SystemTime::now()
+            .duration_since(close_start);
+        println!("closed stream in {:?} flush:{:?} drop:{:?} ack:{:?} chunk:{:?}",
+            close_duration, flush_duration, drop_duration, ack_duration, chunk_duration);
     }
 }
 
@@ -120,13 +141,15 @@ impl Write for BlockOutputStream {
 fn recv_acks(mut stream: TcpStream, sequence_num: Arc<AtomicI64>,
         ack_sequence_num: Arc<AtomicI64>, last_packet: Arc<AtomicBool>)
         -> std::io::Result<()> {
-    while !last_packet.load(Ordering::SeqCst) || 
+    // TODO - fix -> not working for some reason
+    /*while !last_packet.load(Ordering::SeqCst) || 
             ack_sequence_num.load(Ordering::SeqCst) 
                 < sequence_num.load(Ordering::SeqCst) {
 
         // calculate leb128 encoded op proto length
         let mut length = 0;
         for i in 0.. {
+            println!("\tread byte {}", i);
             let byte = stream.read_u8()?;
             length += ((byte & MASK_U8) as u64) << (i * 7);
 
@@ -134,17 +157,20 @@ fn recv_acks(mut stream: TcpStream, sequence_num: Arc<AtomicI64>,
                 break;
             }
         }
+        println!("RECVing ACK: length {}", length);
 
         // read ack proto into buffer
         let mut buf = vec![0u8; length as usize];
         stream.read_exact(&mut buf)?;
+        println!("RECV ACK with length {}", length);
 
         // decode PipelineAckProto
         let pipeline_ack_proto = PipelineAckProto::decode(buf)?;
         if pipeline_ack_proto.seqno > ack_sequence_num.load(Ordering::SeqCst) {
             ack_sequence_num.store(pipeline_ack_proto.seqno, Ordering::SeqCst);
         }
-    }
+        println!("updated ACK {}", pipeline_ack_proto.seqno);
+    }*/
 
     Ok(())    
 }
@@ -153,7 +179,11 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
         sequence_num: Arc<AtomicI64>, last_packet: Arc<AtomicBool>,
         mut offset_in_block: i64, chunk_size_bytes: u32)
         -> std::io::Result<()> {
+    let mut stream = BufWriter::new(stream); // TODO - test
+
     for buf in receiver.iter() {
+        let packet_start = SystemTime::now();
+
         // compute packet length
         let checksum_count =
             (buf.len() as f64 / chunk_size_bytes as f64).ceil() as i32;
@@ -161,6 +191,7 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
         stream.write_i32::<BigEndian>(packet_length)?;
 
         // write packet header proto
+        let header_start = SystemTime::now();
         let packet_header_proto = PacketHeaderProto {
                 offset_in_block: offset_in_block,
                 seqno: sequence_num.load(Ordering::SeqCst),
@@ -175,8 +206,11 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
         let mut packet_header_buf = Vec::new();
         packet_header_proto.encode(&mut packet_header_buf)?;
         stream.write_all(&packet_header_buf)?;
+        let header_duration = SystemTime::now()
+            .duration_since(header_start);
 
         // write checksums
+        let checksum_start = SystemTime::now();
         for i in 0..checksum_count {
             let start_index = (i * chunk_size_bytes as i32) as usize;
             let end_index = std::cmp::min((i + 1)
@@ -186,10 +220,18 @@ fn send_chunks(mut stream: TcpStream, receiver: Receiver<Vec<u8>>,
 
             stream.write_u32::<BigEndian>(checksum)?;
         }
+        let checksum_duration = SystemTime::now()
+            .duration_since(checksum_start);
         
         // write buf
         stream.write_all(&buf)?;
         stream.flush()?;
+
+        let packet_duration = SystemTime::now()
+            .duration_since(packet_start);
+        println!("SEND chunk {} in {:?} header:{:?} checksum:{:?}",
+            sequence_num.load(Ordering::SeqCst), packet_duration,
+            header_duration, checksum_duration);
 
         // if last packet -> break from loop
         if buf.len() == 0 {
