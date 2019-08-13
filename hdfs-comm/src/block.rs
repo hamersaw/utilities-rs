@@ -129,7 +129,7 @@ fn recv_acks(mut stream: TcpStream, sequence_num: Arc<AtomicI64>,
         // calculate leb128 encoded op proto length
         let mut length = 0;
         for i in 0.. {
-            println!("\tread byte {}", i);
+            //println!("\tread byte {}", i);
             let byte = stream.read_u8()?;
             length += ((byte & MASK_U8) as u64) << (i * 7);
 
@@ -137,19 +137,19 @@ fn recv_acks(mut stream: TcpStream, sequence_num: Arc<AtomicI64>,
                 break;
             }
         }
-        println!("RECVing ACK: length {}", length);
+        //println!("RECVing ACK: length {}", length);
 
         // read ack proto into buffer
         let mut buf = vec![0u8; length as usize];
         stream.read_exact(&mut buf)?;
-        println!("RECV ACK with length {}", length);
+        //println!("RECV ACK with length {}", length);
 
         // decode PipelineAckProto
         let pipeline_ack_proto = PipelineAckProto::decode(buf)?;
         if pipeline_ack_proto.seqno > ack_sequence_num.load(Ordering::SeqCst) {
             ack_sequence_num.store(pipeline_ack_proto.seqno, Ordering::SeqCst);
         }
-        println!("updated ACK {}", pipeline_ack_proto.seqno);
+        //println!("updated ACK {}", pipeline_ack_proto.seqno);
     }
 
     Ok(())    
