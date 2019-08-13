@@ -41,12 +41,31 @@ impl Server {
 
         let join_handle = std::thread::spawn(move || {
             for result in listener_clone.incoming() {
-
-                let handler_clone = handler.clone();
-                std::thread::spawn(move || {
-                    process_stream_result(result,
-                        handler_clone, sleep_duration);
-                });
+                match result {
+                    Ok(mut stream) => {
+                        let handler_clone = handler.clone();
+                        std::thread::spawn(move || {
+                            // process stream
+                            let handler = handler_clone.read().unwrap();
+                            match handler.process(&mut stream) {
+                                Err(ref e) if e.kind() != std::io
+                                        ::ErrorKind::UnexpectedEof => {
+                                    error!("failed to process stream {}", e);
+                                },
+                                _ => {},
+                            }
+                        });
+                    },
+                    Err(ref e) if e.kind() ==
+                            std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(sleep_duration);
+                    },
+                    Err(ref e) if e.kind() !=
+                            std::io::ErrorKind::WouldBlock => {
+                        error!("failed to connect client: {}", e);
+                    },
+                    _ => {},
+                }
 
                 // check if shutdown
                 if shutdown_clone.load(Ordering::Relaxed) {
@@ -75,8 +94,28 @@ impl Server {
 
             let join_handle = std::thread::spawn(move || {
                 for result in listener_clone.incoming() {
-                    process_stream_result(result,
-                        handler_clone.clone(), sleep_duration);
+                    match result {
+                        Ok(mut stream) => {
+                            // process stream
+                            let handler = handler_clone.read().unwrap();
+                            match handler.process(&mut stream) {
+                                Err(ref e) if e.kind() != std::io
+                                        ::ErrorKind::UnexpectedEof => {
+                                    error!("failed to process stream {}", e);
+                                },
+                                _ => {},
+                            }
+                        },
+                        Err(ref e) if e.kind() ==
+                                std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(sleep_duration);
+                        },
+                        Err(ref e) if e.kind() !=
+                                std::io::ErrorKind::WouldBlock => {
+                            error!("failed to connect client: {}", e);
+                        },
+                        _ => {},
+                    }
 
                     // check if shutdown
                     if shutdown_clone.load(Ordering::Relaxed) {
@@ -106,33 +145,6 @@ impl Server {
         }
 
         Ok(())
-    }
-}
-
-fn process_stream_result(result: std::io::Result<TcpStream>,
-        handler: Arc<RwLock<Box<StreamHandler>>>, 
-        sleep_duration: Duration) {
-    match result {
-        Ok(mut stream) => {
-            // process stream
-            let handler = handler.read().unwrap();
-            match handler.process(&mut stream) {
-                Err(ref e) if e.kind() != std::io
-                        ::ErrorKind::UnexpectedEof => {
-                    error!("failed to process stream {}", e);
-                },
-                _ => {},
-            }
-        },
-        Err(ref e) if e.kind() ==
-                std::io::ErrorKind::WouldBlock => {
-            std::thread::sleep(sleep_duration);
-        },
-        Err(ref e) if e.kind() !=
-                std::io::ErrorKind::WouldBlock => {
-            error!("failed to connect client: {}", e);
-        },
-        _ => {},
     }
 }
 
