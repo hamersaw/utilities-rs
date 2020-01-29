@@ -24,7 +24,7 @@ pub fn encode_16(latitude: f32, longitude: f32, length: usize)
         for i in 0..4 {
             if i % 2 == 0 { // latitude bit
                 let mid = (min_lat + max_lat) / 2f32;
-                if latitude > mid {
+                if latitude >= mid {
                     index |= MASKS_16[3 - i];
                     min_lat = mid;
                 } else {
@@ -32,7 +32,7 @@ pub fn encode_16(latitude: f32, longitude: f32, length: usize)
                 }
             } else { // longitude bit
                 let mid = (min_long + max_long) / 2f32;
-                if longitude > mid {
+                if longitude >= mid {
                     index |= MASKS_16[3-i];
                     min_long = mid;
                 } else {
